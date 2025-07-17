@@ -8,13 +8,15 @@ from flask import Flask, request
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID")  # للاستخدام الافتراضي فقط
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 redis_url = os.getenv("REDIS_URL")
 r = redis.from_url(redis_url, decode_responses=True)
 
-def send_message(text):
-    data = {"chat_id": CHAT_ID, "text": text}
+def send_message(text, chat_id=None):
+    if not chat_id:
+        chat_id = CHAT_ID
+    data = {"chat_id": chat_id, "text": text}
     requests.post(f"{BASE_URL}/sendMessage", data=data)
 
 def fetch_price(symbol):
@@ -84,6 +86,7 @@ def webhook():
 
     msg = data["message"]
     text = msg.get("text", "")
+    chat_id = msg["chat"]["id"]
 
     if "تم قنص" in text:
         parts = text.split()
@@ -96,16 +99,16 @@ def webhook():
                         "status": None,
                         "start_time": time.time()
                     }))
-                    send_message(f"🕵️‍♂️ أبو الهول يراقب {w} عند {price} EUR")
+                    send_message(f"🕵️‍♂️ أبو الهول يراقب {w} عند {price} EUR", chat_id)
 
     elif "احذف" in text or "حذف" in text:
         r.flushdb()
-        send_message("🧹 تم مسح ذاكرة أبو الهول بالكامل.")
+        send_message("🧹 تم مسح ذاكرة أبو الهول بالكامل.", chat_id)
 
     elif "الملخص" in text or "الحسابات" in text:
         log = json.loads(r.get("sell_log") or "[]")
         if not log:
-            send_message("📊 لا توجد أي عمليات بيع مسجلة.")
+            send_message("📊 لا توجد أي عمليات بيع مسجلة.", chat_id)
         else:
             total, wins, losses = 0, 0, 0
             for t in log:
@@ -114,7 +117,7 @@ def webhook():
                 wins += 1 if perf >= 0 else 0
                 losses += 1 if perf < 0 else 0
             summary = f"📈 فوز: {wins} — خسارة: {losses} — صافي: {round(total,2)}%"
-            send_message(summary)
+            send_message(summary, chat_id)
 
     return "", 200
 
