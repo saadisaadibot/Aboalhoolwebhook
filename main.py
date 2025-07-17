@@ -8,7 +8,7 @@ from flask import Flask, request
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # احتياطي
+CHAT_ID = os.getenv("CHAT_ID")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 redis_url = os.getenv("REDIS_URL")
 r = redis.from_url(redis_url, decode_responses=True)
@@ -81,32 +81,29 @@ def check_prices():
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     data = request.get_json()
-
-    # ✅ طباعة كاملة للمحتوى مهما كان
-    print("📦 البيانات الواردة:\n", json.dumps(data, indent=2, ensure_ascii=False))
+    print("✅ Webhook استلم:", data)
 
     msg = data.get("message") or data.get("channel_post")
     if not msg:
-        print("⚠️ لا يوجد message أو channel_post")
-        return "", 200
+        return "No message", 200
 
     text = msg.get("text", "")
     chat_id = msg["chat"]["id"]
 
-    if "تم قنص" in text:
-        parts = text.split()
-        for w in parts:
-            if "-EUR" in w and not r.exists(w):
-                price = fetch_price(w)
-                if price:
-                    r.set(w, json.dumps({
-                        "entry": price,
-                        "status": None,
-                        "start_time": time.time()
-                    }))
-                    send_message(f"🕵️‍♂️ أبو الهول يراقب {w} عند {price} EUR", chat_id)
+    # يسجل أي عملة فيها -EUR فورًا
+    for word in text.split():
+        if "-EUR" in word and not r.exists(word):
+            price = fetch_price(word)
+            if price:
+                r.set(word, json.dumps({
+                    "entry": price,
+                    "status": None,
+                    "start_time": time.time()
+                }))
+                send_message(f"🕵️‍♂️ أبو الهول يراقب {word} عند {price} EUR", chat_id)
 
-    elif "احذف" in text or "حذف" in text:
+    # أوامر حذف وملخص
+    if "احذف" in text or "حذف" in text:
         r.flushdb()
         send_message("🧹 تم مسح ذاكرة أبو الهول بالكامل.", chat_id)
 
@@ -133,7 +130,7 @@ if __name__ == "__main__":
             try:
                 check_prices()
             except Exception as e:
-                print("❌ خطأ في check_prices:", str(e))
+                print(f"❌ خطأ في الأسعار: {e}")
             time.sleep(10)
 
     Thread(target=price_loop, daemon=True).start()
