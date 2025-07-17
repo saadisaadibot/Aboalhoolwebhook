@@ -8,7 +8,7 @@ from flask import Flask, request
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")  # للاستخدام الافتراضي فقط
+CHAT_ID = os.getenv("CHAT_ID")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 redis_url = os.getenv("REDIS_URL")
 r = redis.from_url(redis_url, decode_responses=True)
@@ -81,15 +81,16 @@ def check_prices():
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def webhook():
     data = request.get_json()
+    print("📦 محتوى البيانات الواردة:\n", json.dumps(data, indent=2, ensure_ascii=False))
 
     msg = data.get("message") or data.get("edited_message") or data.get("channel_post")
     if not msg:
+        print("🚫 ما تم العثور على رسالة في البيانات.")
         return "", 200
 
     text = msg.get("text", "")
     chat_id = msg["chat"]["id"]
-
-    print("📩 الرسالة المستلمة:", text)  # لمراقبة أي رسالة توصل
+    print("📩 الرسالة المستلمة:", text)
 
     if "تم قنص" in text:
         parts = text.split()
@@ -130,8 +131,8 @@ if __name__ == "__main__":
         while True:
             try:
                 check_prices()
-            except Exception as e:
-                print("❌ خطأ بالمراقبة:", e)
+            except:
+                pass
             time.sleep(10)
 
     Thread(target=price_loop, daemon=True).start()
