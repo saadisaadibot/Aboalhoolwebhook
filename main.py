@@ -3,7 +3,7 @@ import time
 import requests
 import redis
 import json
-from flask import Flask, request, abort
+from flask import Flask, request
 
 app = Flask(__name__)
 
@@ -28,10 +28,12 @@ def fetch_price(symbol):
 
 def check_prices():
     for symbol in r.keys():
-        if symbol == "sell_log": continue
+        if symbol == "sell_log":
+            continue
         entry = json.loads(r.get(symbol))
         current = fetch_price(symbol)
-        if not current: continue
+        if not current:
+            continue
         entry_price = entry["entry"]
 
         if entry.get("status") == "trailing":
@@ -42,9 +44,15 @@ def check_prices():
             drop = (peak - current) / peak * 100
             if drop >= 1.5:
                 change = (current - entry_price) / entry_price * 100
-                send_message(f"🎯 {symbol} تم البيع بعد пики – ربح {round(change,2)}%")
+                send_message(f"🎯 {symbol} تم البيع بعد پيك – ربح {round(change,2)}%")
                 log = json.loads(r.get("sell_log") or "[]")
-                log.append({"symbol": symbol,"entry": entry_price,"exit": current,"change": round(change,2),"result": "ربح"})
+                log.append({
+                    "symbol": symbol,
+                    "entry": entry_price,
+                    "exit": current,
+                    "change": round(change,2),
+                    "result": "ربح"
+                })
                 r.set("sell_log", json.dumps(log))
                 r.delete(symbol)
         else:
@@ -58,7 +66,13 @@ def check_prices():
             elif change <= -3:
                 send_message(f"📉 {symbol} خسارة -{abs(round(change,2))}% – بيع فوري.")
                 log = json.loads(r.get("sell_log") or "[]")
-                log.append({"symbol": symbol,"entry": entry_price,"exit": current,"change": round(change,2),"result": "خسارة"})
+                log.append({
+                    "symbol": symbol,
+                    "entry": entry_price,
+                    "exit": current,
+                    "change": round(change,2),
+                    "result": "خسارة"
+                })
                 r.set("sell_log", json.dumps(log))
                 r.delete(symbol)
 
@@ -77,26 +91,30 @@ def webhook():
             if "-EUR" in w and not r.exists(w):
                 price = fetch_price(w)
                 if price:
-                    r.set(w, json.dumps({"entry": price,"status": None,"start_time": time.time()}))
-                    send_message(f"🕵️‍♂️ أبو عبدو يراقب {w} عند {price} EUR")
+                    r.set(w, json.dumps({
+                        "entry": price,
+                        "status": None,
+                        "start_time": time.time()
+                    }))
+                    send_message(f"🕵️‍♂️ أبو الهول يراقب {w} عند {price} EUR")
 
-    if "احذف" in text or "حذف" in text:
+    elif "احذف" in text or "حذف" in text:
         r.flushdb()
         send_message("🧹 تم مسح ذاكرة أبو الهول بالكامل.")
 
-    if "الملخص" in text or "الحسابات" in text:
+    elif "الملخص" in text or "الحسابات" in text:
         log = json.loads(r.get("sell_log") or "[]")
         if not log:
             send_message("📊 لا توجد أي عمليات بيع مسجلة.")
         else:
-            total, wins, losses = 0,0,0
+            total, wins, losses = 0, 0, 0
             for t in log:
                 perf = (t["exit"] - t["entry"]) / t["entry"] * 100
                 total += perf
-                wins += 1 if perf >=0 else 0
-                losses += 1 if perf <0 else 0
-            msg_summary = f"📈 فوز: {wins} — خسارة: {losses} — صافي: {round(total,2)}%"
-            send_message(msg_summary)
+                wins += 1 if perf >= 0 else 0
+                losses += 1 if perf < 0 else 0
+            summary = f"📈 فوز: {wins} — خسارة: {losses} — صافي: {round(total,2)}%"
+            send_message(summary)
 
     return "", 200
 
@@ -104,8 +122,11 @@ if __name__ == "__main__":
     from threading import Thread
     def price_loop():
         while True:
-            try: check_prices()
-            except: pass
+            try:
+                check_prices()
+            except:
+                pass
             time.sleep(10)
+
     Thread(target=price_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
