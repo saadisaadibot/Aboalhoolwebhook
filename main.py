@@ -2,7 +2,7 @@ import os
 import redis
 import requests
 from flask import Flask, request
-from bitvavo import Bitvavo
+from python_bitvavo_api.bitvavo import Bitvavo  # ✅ صح
 from threading import Thread
 from time import sleep
 
