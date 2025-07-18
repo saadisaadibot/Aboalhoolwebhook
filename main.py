@@ -36,8 +36,7 @@ def fetch_price(symbol):
 
 # أمر الملخص
 def summary():
-    msg = "📊 العملات المُراقبة:
-"
+    msg = "📊 العملات المُراقَبة:\n"
     for symbol in r.keys():
         symbol = symbol
         data = r.hgetall(symbol)
@@ -45,8 +44,7 @@ def summary():
         high = float(data['high'])
         current = fetch_price(symbol)
         change = ((current - bought) / bought) * 100
-        msg += f"{symbol}: حالياً {current:.4f} | ربح/خسارة: {change:.2f}%
-"
+        msg += f"{symbol}: حالياً {current:.4f} | ربح/خسارة: {change:.2f}%"
     send_message(msg)
 
 # Flask Webhook
