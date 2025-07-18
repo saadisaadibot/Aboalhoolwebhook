@@ -1,4 +1,3 @@
-
 import os
 import json
 import time
@@ -41,12 +40,12 @@ def fetch_price(symbol):
 
 def buy(symbol, amount_eur):
     try:
-        response = bitvavo.placeOrder({
-            'market': symbol,
-            'side': 'buy',
-            'orderType': 'market',
-            'amountQuote': str(amount_eur)
-        })
+        response = bitvavo.placeOrder(
+            symbol,
+            'buy',
+            'market',
+            { 'amountQuote': str(amount_eur) }
+        )
         print("✅ عملية شراء:", response)
         return fetch_price(symbol)
     except Exception as e:
@@ -55,12 +54,12 @@ def buy(symbol, amount_eur):
 
 def sell(symbol, amount):
     try:
-        response = bitvavo.placeOrder({
-            'market': symbol,
-            'side': 'sell',
-            'orderType': 'market',
-            'amount': str(amount)
-        })
+        response = bitvavo.placeOrder(
+            symbol,
+            'sell',
+            'market',
+            { 'amount': str(amount) }
+        )
         print("🟥 عملية بيع:", response)
     except Exception as e:
         print("❌ فشل البيع:", e)
