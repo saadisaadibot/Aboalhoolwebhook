@@ -81,7 +81,7 @@ def webhook():
                 send_message(msg)
             return "200"
 
-        if "طوارئ" in text or "🚨" in text:
+        if "طوارئ" in text or "#EMERGENCY" in text:
             count = 0
             for key in list(r.scan_iter()):
                 if key == "sell_log":
