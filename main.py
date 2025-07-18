@@ -42,13 +42,13 @@ def buy(symbol):
     try:
         print(f"⚡ محاولة شراء {symbol}")
         result = bitvavo.placeOrder(symbol, 'buy', 'market', {
-            'amountQuote': 10,
-            'operatorId': 'bot'  # <<=== هاد السطر هو الحل
+            'amountQuote': 10
         })
-        print("✅ أمر الشراء تم:", result)
+        print("✅ رد Bitvavo:", result)
+        send_message(f"✅ محاولة شراء {symbol}:\n{result}")
         return True
     except Exception as e:
-        print("❌ خطأ أثناء الشراء:", e)
+        print("❌ فشل الشراء:", e)
         send_message(f"❌ فشل الشراء: {e}")
         return False
 
