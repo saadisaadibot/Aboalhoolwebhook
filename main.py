@@ -5,7 +5,7 @@ import time
 import redis
 import requests
 from flask import Flask, request
-from bitvavo import Bitvavo
+from python_bitvavo_api.bitvavo import Bitvavo
 
 app = Flask(__name__)
 
