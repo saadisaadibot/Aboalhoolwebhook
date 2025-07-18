@@ -4,7 +4,7 @@ import requests
 from flask import Flask, request
 from threading import Thread
 from time import sleep
-from bitvavo import Bitvavo
+from python_bitvavo_api.bitvavo import Bitvavo
 
 # إعداد المفاتيح من البيئة
 BOT_TOKEN = os.getenv("BOT_TOKEN")
