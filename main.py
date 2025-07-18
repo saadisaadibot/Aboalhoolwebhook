@@ -112,8 +112,7 @@ def summary():
         high = float(data[b"high"].decode())
         current = fetch_price(symbol)
         change = ((current - bought) / bought) * 100 if current else 0
-        msg += f"{symbol}: حاليًا {current:.2f}€ | تم الشراء {bought:.2f}€ | ربح/خسارة {change:.2f}%
-"
+        msg += f"{symbol}: حاليًا {current:.2f}€ | تم الشراء {bought:.2f}€ | ربح/خسارة {change:.2f}%"
     send_message(msg)
 
 # استقبال Webhook
