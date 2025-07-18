@@ -80,7 +80,6 @@ def monitor():
                 current = fetch_price(symbol)
                 if not current:
                     continue
-                change = ((current - bought) / bought) * 100
                 if current > high:
                     r.hset(symbol, "high", current)
                 elif high >= bought * 1.03 and current <= high * 0.985:
@@ -160,8 +159,15 @@ def webhook():
         send_message(f"💥 خطأ غير متوقع: {e}")
         return "Server Error", 500
 
-# 🧹 مسح الذاكرة تلقائيًا عند التشغيل
-clear_memory()
+# 🧹 مسح الذاكرة تلقائيًا بعد التشغيل
+def delayed_clear():
+    time.sleep(2)
+    try:
+        clear_memory()
+    except Exception as e:
+        send_message(f"⚠️ فشل في مسح الذاكرة عند التشغيل: {e}")
+
+threading.Thread(target=delayed_clear, daemon=True).start()
 
 # 🔁 تشغيل المراقبة
 threading.Thread(target=monitor, daemon=True).start()
