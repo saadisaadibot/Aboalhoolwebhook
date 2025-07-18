@@ -41,7 +41,10 @@ def send_message(text):
 def buy(symbol):
     try:
         print(f"⚡ محاولة شراء {symbol}")
-        result = bitvavo.placeOrder(symbol, 'buy', 'market', {'amountQuote': 10})
+        result = bitvavo.placeOrder(symbol, 'buy', 'market', {
+            'amountQuote': 10,
+            'operatorId': 'bot'  # <<=== هاد السطر هو الحل
+        })
         print("✅ أمر الشراء تم:", result)
         return True
     except Exception as e:
