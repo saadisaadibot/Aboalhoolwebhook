@@ -4,16 +4,14 @@ import json
 import time
 import redis
 import requests
+import threading
 from flask import Flask, request
 
 app = Flask(__name__)
 
-# إعدادات تيليغرام
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-
-# Redis
 REDIS_URL = os.getenv("REDIS_URL")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -40,11 +38,8 @@ def webhook():
         print("✅ Webhook استلم:", data)
 
         message = data.get("message", {}) or data.get("edited_message", {})
-        text = message.get("text", "")
-        sender = message.get("from", {}).get("username", "")
-        chat_id = str(message.get("chat", {}).get("id", ""))
+        text = message.get("text", "").strip()
 
-        # 1. أوامر المستخدم
         if "احذف" in text or "حذف" in text:
             for key in list(r.scan_iter()):
                 r.delete(key)
@@ -68,13 +63,11 @@ def webhook():
                         win_count += 1
                     else:
                         lose_count += 1
-
                 msg = (
                     f"📈 عدد الصفقات الرابحة: {win_count}\n"
                     f"📉 عدد الصفقات الخاسرة: {lose_count}\n"
                     f"💰 صافي الربح/الخسارة: {round(total_profit, 2)}%\n"
                 )
-
                 watchlist = []
                 for key in r.scan_iter():
                     if key == "sell_log":
@@ -83,17 +76,39 @@ def webhook():
                     minutes = int((time.time() - entry["start_time"]) / 60)
                     duration = f"{minutes} دقيقة" if minutes < 60 else f"{minutes // 60} ساعة و{minutes % 60} دقيقة"
                     watchlist.append(f"- {key} منذ {duration}")
-
                 if watchlist:
                     msg += "\n👁️ العملات التي تتم مراقبتها الآن:\n" + "\n".join(watchlist)
-
                 send_message(msg)
             return "200"
 
-        # 2. إشعارات صقر
+        if "طوارئ" in text or "🚨" in text:
+            count = 0
+            for key in list(r.scan_iter()):
+                if key == "sell_log":
+                    continue
+                entry = json.loads(r.get(key))
+                current = fetch_price(key)
+                if current:
+                    entry_price = entry["entry"]
+                    change = ((current - entry_price) / entry_price) * 100
+                    result = "ربح" if change >= 0 else "خسارة"
+                    send_message(f"⚠️ بيع {key} بنسبة {round(change, 2)}% – {result}")
+                    log = json.loads(r.get("sell_log") or "[]")
+                    log.append({
+                        "symbol": key,
+                        "entry": entry_price,
+                        "exit": current,
+                        "change": round(change,2),
+                        "result": result
+                    })
+                    r.set("sell_log", json.dumps(log))
+                    r.delete(key)
+                    count += 1
+            send_message(f"🚨 تم تنفيذ بيع الطوارئ لعدد {count} عملة.")
+            return "200"
+
         if "-EUR" in text:
-            words = text.split()
-            for word in words:
+            for word in text.split():
                 if "-EUR" in word and not r.exists(word):
                     price = fetch_price(word)
                     if price:
@@ -110,11 +125,65 @@ def webhook():
         print("❌ خطأ:", e)
         return "error", 500
 
-# روت التشغيل اليدوي للاختبار فقط
 @app.route("/")
 def home():
     return "Abo Alhoul Webhook is running."
 
+def check_prices():
+    while True:
+        try:
+            for key in list(r.scan_iter()):
+                if key == "sell_log":
+                    continue
+                entry = json.loads(r.get(key))
+                current = fetch_price(key)
+                if not current:
+                    continue
+                entry_price = entry["entry"]
+                if entry.get("status") == "trailing":
+                    peak = entry["peak"]
+                    if current > peak:
+                        entry["peak"] = current
+                        r.set(key, json.dumps(entry))
+                    drop = ((peak - current) / peak) * 100
+                    if drop >= 1.5:
+                        change = ((current - entry_price) / entry_price) * 100
+                        send_message(f"🎯 {key} تم البيع بعد ارتفاع ثم نزول – ربح {round(change,2)}%")
+                        log = json.loads(r.get("sell_log") or "[]")
+                        log.append({
+                            "symbol": key,
+                            "entry": entry_price,
+                            "exit": current,
+                            "change": round(change,2),
+                            "result": "ربح"
+                        })
+                        r.set("sell_log", json.dumps(log))
+                        r.delete(key)
+                else:
+                    change = ((current - entry_price) / entry_price) * 100
+                    if change >= 3:
+                        entry["status"] = "trailing"
+                        entry["peak"] = current
+                        r.set(key, json.dumps(entry))
+                        send_message(f"🟢 {key} ارتفعت +3% – نبدأ مراقبة القمة.")
+                    elif change <= -3:
+                        send_message(f"📉 {key} خسارة -{round(abs(change), 2)}% – تم البيع.")
+                        log = json.loads(r.get("sell_log") or "[]")
+                        log.append({
+                            "symbol": key,
+                            "entry": entry_price,
+                            "exit": current,
+                            "change": round(change,2),
+                            "result": "خسارة"
+                        })
+                        r.set("sell_log", json.dumps(log))
+                        r.delete(key)
+            time.sleep(5)
+        except Exception as e:
+            print("❌ خطأ في المتابعة:", e)
+            time.sleep(10)
+
 if __name__ == "__main__":
-    send_message("✅ تم تشغيل أبو الهول بنجاح (Webhook + Trail Logic).")
+    send_message("✅ تم تشغيل أبو الهول (Webhook + مراقبة الأسعار).")
+    threading.Thread(target=check_prices).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
