@@ -4,7 +4,7 @@ import threading
 import redis
 import requests
 from flask import Flask, request
-from bitvavo import Bitvavo
+from python_bitvavo_api.bitvavo import Bitvavo
 
 # إعدادات
 BOT_TOKEN = os.getenv("BOT_TOKEN")
