@@ -1,182 +1,142 @@
 import os
-import time
+import json
 import threading
-import redis
+import time
 import requests
 from flask import Flask, request
+from redis import Redis
 from python_bitvavo_api.bitvavo import Bitvavo
 
-# إعداد البوت
-app = Flask(__name__)
-bitvavo = Bitvavo({
-    'APIKEY': os.getenv('BITVAVO_API_KEY'),
-    'APISECRET': os.getenv('BITVAVO_API_SECRET'),
-    'RESTURL': 'https://api.bitvavo.com/v2'
-})
+# إعداد البيئة
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
+BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
+REDIS_URL = os.getenv("REDIS_URL")
 
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-CHAT_ID = os.getenv('CHAT_ID')
-BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-redis_url = os.getenv('REDIS_URL')
-r = redis.from_url(redis_url, decode_responses=True)
-
+# تيليغرام
 def send_message(text):
-    url = f"{BASE_URL}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": text})
 
-def fetch_price(symbol):
-    try:
-        res = bitvavo.tickerPrice({'market': symbol})
-        return float(res['price'])
-    except:
-        return None
+# Redis
+redis = Redis.from_url(REDIS_URL, decode_responses=True)
 
-def buy(symbol):
-    try:
-        res = bitvavo.placeOrder({
-            'market': symbol,
-            'side': 'buy',
-            'orderType': 'market',
-            'amount': str(round(10 / fetch_price(symbol), 8))
-        })
-        return res
-    except Exception as e:
-        send_message(f"❌ فشل في الشراء: {e}")
-        return None
+# Bitvavo
+bitvavo = Bitvavo({
+    'APIKEY': BITVAVO_API_KEY,
+    'APISECRET': BITVAVO_API_SECRET
+})
 
-def sell(symbol, amount):
-    try:
-        res = bitvavo.placeOrder({
-            'market': symbol,
-            'side': 'sell',
-            'orderType': 'market',
-            'amount': str(amount)
-        })
-        return res
-    except Exception as e:
-        send_message(f"❌ فشل في البيع: {e}")
-        return None
+# Flask
+app = Flask(__name__)
 
-def monitor():
-    while True:
-        keys = [key for key in r.keys() if key.endswith('-EUR')]
-        for symbol in keys:
-            try:
-                data = eval(r.get(symbol))
-                buy_price = data['buy_price']
-                amount = data['amount']
-                high = data.get('high', buy_price)
-                price = fetch_price(symbol)
+@app.route('/')
+def home():
+    return 'Abo Alhool is alive!'
 
-                if not price:
-                    continue
-
-                if price > high:
-                    high = price
-                    data['high'] = high
-                    r.set(symbol, str(data))
-
-                change = (price - buy_price) / buy_price * 100
-                drop_from_high = (high - price) / high * 100
-
-                if change >= 3 and drop_from_high >= 1.5:
-                    sell(symbol, amount)
-                    r.delete(symbol)
-                    log = f"✅ تم البيع: {symbol} بربح {round(change, 2)}%"
-                    send_message(log)
-                    update_sell_log(log)
-
-                elif change <= -3:
-                    sell(symbol, amount)
-                    r.delete(symbol)
-                    log = f"⚠️ تم البيع بخسارة: {symbol} بنسبة {round(change, 2)}%"
-                    send_message(log)
-                    update_sell_log(log)
-
-            except Exception as e:
-                send_message(f"🚨 خطأ في المراقبة: {e}")
-        time.sleep(15)
-
-def update_sell_log(entry):
-    old = r.get("sell_log") or ""
-    updated = old + entry + "\n"
-    r.set("sell_log", updated)
-
-@app.route(f"/webhook/{TELEGRAM_TOKEN}", methods=["POST"])
+@app.route('/webhook', methods=['POST'])
 def webhook():
+    data = request.get_json()
     try:
-        msg = request.json["message"]
-        text = msg.get("text", "")
-        if not text:
-            return "No text", 200
+        message = data.get("message", {}).get("text", "")
+        if not message:
+            return "No message", 200
 
-        if text == "الملخص":
-            return summary(), 200
+        if message.strip() == "يرجى المسح":
+            redis.flushdb()
+            send_message("🧹 تم مسح الذاكرة بنجاح.")
+            return "Memory cleared", 200
 
-        elif "يرجى المسح" in text:
-            try:
-                for key in r.keys():
-                    r.delete(key)
-                send_message("🧹 تم مسح الذاكرة.")
-            except Exception as e:
-                send_message(f"⚠️ فشل في المسح: {e}")
-            return "Done", 200
+        elif message.strip() == "الملخص":
+            keys = redis.keys("*")
+            if not keys:
+                send_message("لا يوجد عملات تحت المراقبة حالياً.")
+            else:
+                summary = "📊 العملات المراقبة:\n\n"
+                for key in keys:
+                    if key.startswith("sell_log"): continue
+                    try:
+                        coin = json.loads(redis.get(key))
+                        summary += f"{key} - شراء: {coin['buy_price']}€\n"
+                    except:
+                        continue
+                send_message(summary)
+            return "Summary sent", 200
 
-        elif text in ["طوارئ", "#EMERGENCY"]:
-            try:
-                keys = [key for key in r.keys() if key.endswith("-EUR")]
-                for symbol in keys:
-                    data = eval(r.get(symbol))
-                    sell(symbol, data['amount'])
-                    r.delete(symbol)
-                send_message("🚨 تم تنفيذ بيع كامل للمحفظة.")
-            except Exception as e:
-                send_message(f"⚠️ فشل في بيع الطوارئ: {e}")
-            return "Emergency", 200
+        elif message.strip() in ["طوارئ", "#EMERGENCY"]:
+            keys = redis.keys("*")
+            for symbol in keys:
+                if symbol.startswith("sell_log"): continue
+                coin = json.loads(redis.get(symbol))
+                try:
+                    balance = bitvavo.getBalance({'symbol': symbol.split('-')[0]})
+                    quantity = float(balance["available"])
+                    if quantity > 0:
+                        bitvavo.placeOrder(symbol, {'side': 'sell', 'orderType': 'market', 'amount': quantity})
+                        send_message(f"🚨 تم بيع {symbol} بسبب الطوارئ.")
+                        redis.delete(symbol)
+                except:
+                    continue
+            return "Emergency sell executed", 200
 
-        elif "-EUR" in text:
-            symbol = text.strip()
-            price = fetch_price(symbol)
-            if not price:
-                send_message(f"⚠️ لم يتم جلب سعر {symbol}")
-                return "Error", 200
+        elif "-EUR" in message:
+            symbol = message.strip().upper()
+            price = float(bitvavo.getTickerPrice({'market': symbol})['price'])
+            redis.set(symbol, json.dumps({
+                "symbol": symbol,
+                "buy_price": price,
+                "high_price": price
+            }))
+            bitvavo.placeOrder(symbol, {'side': 'buy', 'orderType': 'market', 'amount': 10 / price})
+            send_message(f"📈 تمت مراقبة وشراء {symbol} عند {price}€")
+            return "Coin registered", 200
 
-            res = buy(symbol)
-            if res:
-                amount = float(res['filled'][0]['amount'])
-                r.set(symbol, str({'buy_price': price, 'amount': amount, 'high': price}))
-                send_message(f"👁️‍🗨️ تمت المراقبة: {symbol} عند سعر {price}")
-            return "OK", 200
-
-        return "Ignored", 200
     except Exception as e:
-        send_message(f"❌ حدث خطأ: {e}")
-        return "Error", 200
+        send_message(f"❌ خطأ في Webhook: {str(e)}")
+        return "Error", 500
 
-def summary():
-    keys = [key for key in r.keys() if key.endswith("-EUR")]
-    if not keys:
-        send_message("📭 لا توجد عملات تحت المراقبة.")
-        return "No coins", 200
+    return "OK", 200
 
-    summary_text = "📊 العملات تحت المراقبة:\n"
-    for symbol in keys:
+# مراقبة الأسعار
+def watch_prices():
+    while True:
         try:
-            data = eval(r.get(symbol))
-            price = fetch_price(symbol)
-            change = (price - data['buy_price']) / data['buy_price'] * 100
-            summary_text += f"• {symbol} 🔹 ربح/خسارة: {round(change, 2)}%\n"
-        except:
-            continue
+            keys = redis.keys("*")
+            for symbol in keys:
+                if symbol.startswith("sell_log"): continue
+                coin = json.loads(redis.get(symbol))
+                current_price = float(bitvavo.getTickerPrice({'market': symbol})['price'])
+                buy_price = float(coin["buy_price"])
+                high_price = float(coin["high_price"])
 
-    log = r.get("sell_log") or ""
-    if log:
-        summary_text += f"\n📜 سجل المبيعات:\n{log}"
+                if current_price > high_price:
+                    high_price = current_price
+                    coin["high_price"] = high_price
+                    redis.set(symbol, json.dumps(coin))
 
-    send_message(summary_text)
-    return "Sent", 200
+                profit_percent = ((current_price - buy_price) / buy_price) * 100
+                drop_from_peak = ((high_price - current_price) / high_price) * 100
 
-if __name__ == "__main__":
+                if profit_percent >= 3 and drop_from_peak >= 1.5:
+                    quantity = float(bitvavo.getBalance({'symbol': symbol.split('-')[0]})["available"])
+                    if quantity > 0:
+                        bitvavo.placeOrder(symbol, {'side': 'sell', 'orderType': 'market', 'amount': quantity})
+                        send_message(f"💰 تم بيع {symbol} بربح {round(profit_percent,2)}%")
+                        redis.delete(symbol)
+
+                elif profit_percent <= -3:
+                    quantity = float(bitvavo.getBalance({'symbol': symbol.split('-')[0]})["available"])
+                    if quantity > 0:
+                        bitvavo.placeOrder(symbol, {'side': 'sell', 'orderType': 'market', 'amount': quantity})
+                        send_message(f"📉 تم بيع {symbol} بخسارة {round(profit_percent,2)}%")
+                        redis.delete(symbol)
+
+        except Exception as e:
+            send_message(f"💥 خطأ في المراقبة: {str(e)}")
+        time.sleep(30)
+
+if __name__ == '__main__':
     send_message("🤖 تم تشغيل بوت أبو الهول بنجاح!")
-    threading.Thread(target=monitor, daemon=True).start()
-    app.run(host="0.0.0.0", port=8080)
+    threading.Thread(target=watch_prices).start()
+    app.run(host='0.0.0.0', port=8080)
