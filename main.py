@@ -120,27 +120,23 @@ app = Flask(__name__)
 
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    data = request.get_json()
+    data = request.get_json(force=True) or {}
+    print("✅ تم استقبال رسالة Webhook:", data)
     message = data.get("message", {}).get("text", "")
+
     if not message:
         return "No message", 200
 
     if "طوارئ" in message or "#EMERGENCY" in message:
         emergency_sell_all()
-        send_message("🧨 تم تنفيذ أمر الطوارئ: بيع كامل المحفظة.")
-        return "OK", 200
-
-    if "الملخص" in message:
+    elif "الملخص" in message:
         summary()
-        return "OK", 200
-
-    if "-EUR" in message:
-        symbol = message.strip().upper()
-        if not r.exists(symbol):
+    elif "-EUR" in message:
+        symbol = extract_symbol(message)
+        if symbol:
             buy_coin(symbol)
-        else:
-            send_message(f"{symbol} تحت المراقبة بالفعل.")
-        return "OK", 200
+
+    return "ok", 200
 
     return "Ignored", 200
 
