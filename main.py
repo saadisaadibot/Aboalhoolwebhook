@@ -28,7 +28,7 @@ bitvavo = Bitvavo({
 # 🚀 Flask
 app = Flask(__name__)
 
-# 📤 إرسال رسالة
+# 📤 إرسال رسالة تيليغرام
 def send_message(text):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -37,17 +37,19 @@ def send_message(text):
     except Exception as e:
         print("❌ فشل إرسال الرسالة:", e)
 
-# 💸 تنفيذ شراء Market بقيمة 10 يورو
+# 💸 شراء Market بقيمة 10 يورو
 def buy(symbol):
     try:
         print(f"⚡ محاولة شراء {symbol}")
-        bitvavo.placeOrder(symbol, 'buy', 'market', {'amountQuote': 10})
+        result = bitvavo.placeOrder(symbol, 'buy', 'market', {'amountQuote': 10})
+        print("✅ أمر الشراء تم:", result)
         return True
     except Exception as e:
+        print("❌ خطأ أثناء الشراء:", e)
         send_message(f"❌ فشل الشراء: {e}")
         return False
 
-# 💰 تنفيذ بيع كامل الرصيد لرمز معين
+# 💰 بيع كامل الرصيد لعملة معينة
 def sell(symbol):
     try:
         asset = symbol.split("-")[0]
@@ -73,7 +75,7 @@ def format_duration(minutes):
     m = minutes % 60
     return f"{h} ساعة و{m} دقيقة" if h else f"{m} دقيقة"
 
-# 💵 جلب السعر الحالي
+# 💵 السعر الحالي
 def fetch_price(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
@@ -119,7 +121,7 @@ def summary():
 
     send_message(msg)
 
-# 📈 منطق مراقبة الربح والخسارة
+# 📈 منطق مراقبة الأسعار والربح/الخسارة
 def check_prices():
     for symbol in list(db.keys()):
         if symbol == "sell_log":
@@ -175,9 +177,11 @@ def check_prices():
                 db.set("sell_log", json.dumps(log))
                 db.delete(symbol)
 
-# 🛰️ استقبال إشارات صقر وأوامر المجموعة
-@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
-def webhook():
+# 🛰️ Webhook ديناميكي مع التحقق من التوكن
+@app.route("/webhook/<token>", methods=["POST"])
+def webhook(token):
+    if token != BOT_TOKEN:
+        return "unauthorized", 403
     try:
         data = request.get_json()
         msg = data.get("message", {}) or data.get("edited_message", {})
@@ -185,7 +189,6 @@ def webhook():
         if not text:
             return "ok"
 
-        # طوارئ
         if "طوارئ" in text or "#EMERGENCY" in text:
             for symbol in list(db.keys()):
                 if symbol == "sell_log":
@@ -195,17 +198,14 @@ def webhook():
             send_message("🚨 تم تفعيل وضع الطوارئ وبيع كل العملات.")
             return "ok"
 
-        # أمر المسح
         if "يرجى المسح" in text:
             delete_memory()
             return "ok"
 
-        # الملخص
         if "الملخص" in text or "الحسابات" in text:
             summary()
             return "ok"
 
-        # شراء تلقائي عند وجود -EUR
         if "-EUR" in text:
             for word in text.split():
                 if "-EUR" in word and word not in db:
