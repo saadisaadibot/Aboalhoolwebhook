@@ -1,4 +1,4 @@
 Flask==2.2.5
 redis==4.6.0
 requests==2.31.0
-bitvavo-api
+git+https://github.com/bitvavo/python-bitvavo-api.git
