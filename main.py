@@ -104,8 +104,7 @@ def emergency_sell_all():
 
 # أمر الملخص
 def summary():
-    msg = "📊 العملات المراقبة:
-"
+    msg = "📊 العملات المراقَبة:\n"
     for symbol in r.keys():
         symbol = symbol.decode()
         data = r.hgetall(symbol)
