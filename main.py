@@ -1,17 +1,21 @@
+
 import os
 import redis
 import requests
 from flask import Flask, request
+from python_bitvavo_api.bitvavo import Bitvavo
 from threading import Thread
 from time import sleep
-from python_bitvavo_api.bitvavo import Bitvavo
 
-# إعداد المفاتيح من البيئة
+# إعداد المفاتيح من env
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-BITVAVO_API_KEY = os.getenv("API_KEY")
-BITVAVO_API_SECRET = os.getenv("API_SECRET")
+BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
+BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
 REDIS_URL = os.getenv("REDIS_URL")
+
+# إعداد Redis
+r = redis.from_url(REDIS_URL)
 
 # إعداد Bitvavo
 bitvavo = Bitvavo({
@@ -19,61 +23,59 @@ bitvavo = Bitvavo({
     'APISECRET': BITVAVO_API_SECRET
 })
 
-# إعداد Redis
-r = redis.Redis.from_url(REDIS_URL)
-
-# إعداد Flask
-app = Flask(__name__)
-
-# إرسال رسالة تيليغرام
+# إرسال رسالة إلى تيليغرام
 def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": text}
-    requests.post(url, data=data)
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+        "chat_id": CHAT_ID,
+        "text": text
+    })
 
-# شراء العملة
+# جلب السعر الحالي
+def fetch_price(symbol):
+    try:
+        res = bitvavo.tickerPrice({'market': symbol})
+        return float(res['price'])
+    except:
+        return None
+
+# تنفيذ أمر شراء
 def buy_coin(symbol):
     try:
-        response = bitvavo.placeOrder({
-            'market': symbol,
-            'side': 'buy',
-            'orderType': 'market',
-            'amount': '10'  # يورو وليس كمية العملات
+        balance = float(bitvavo.balance({'currency': 'EUR'})[0]['available'])
+        if balance < 10:
+            send_message("❌ لا يوجد رصيد كافي للشراء.")
+            return
+
+        res = bitvavo.placeOrder(symbol, 'buy', 'market', {
+            'amount': round(10 / fetch_price(symbol), 5)
         })
-        send_message(f"✅ تم شراء {symbol} بـ 10 يورو.")
-        price = float(fetch_price(symbol))
-        r.hset(symbol, mapping={"bought": price, "high": price})
+
+        current = fetch_price(symbol)
+        data = {
+            'bought': current,
+            'high': current
+        }
+        r.hset(symbol, mapping=data)
+        send_message(f"✅ تم شراء {symbol} بسعر {current}€")
     except Exception as e:
         send_message(f"❌ فشل الشراء: {e}")
 
-# بيع العملة
+# تنفيذ أمر بيع
 def sell_coin(symbol):
     try:
-        balance = bitvavo.getBalance({symbol.replace("-EUR", ""): ""})
-        amount = next((b["available"] for b in balance if b["symbol"] == symbol.replace("-EUR", "")), None)
-        if amount and float(amount) > 0:
-            bitvavo.placeOrder({
-                'market': symbol,
-                'side': 'sell',
-                'orderType': 'market',
-                'amount': amount
-            })
-            send_message(f"📤 تم بيع {symbol} بالكامل.")
+        data = r.hgetall(symbol)
+        if not data:
+            return
+        amount = round(10 / float(data[b'bought'].decode()), 5)
+        bitvavo.placeOrder(symbol, 'sell', 'market', {
+            'amount': amount
+        })
+        send_message(f"🚨 تم بيع {symbol}")
         r.delete(symbol)
     except Exception as e:
         send_message(f"❌ فشل البيع: {e}")
 
-# جلب سعر العملة
-def fetch_price(symbol):
-    try:
-        url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
-        response = requests.get(url)
-        if response.status_code == 200:
-            return float(response.json()["price"])
-    except:
-        return None
-
-# مراقبة العملات
+# منطق المراقبة
 def monitor():
     while True:
         for symbol in r.keys():
@@ -85,11 +87,9 @@ def monitor():
             if not current:
                 continue
             if current > high:
-                high = current
-                r.hset(symbol, "high", high)
+                r.hset(symbol, "high", current)
             change_from_buy = ((current - bought) / bought) * 100
             drop_from_peak = ((high - current) / high) * 100
-
             if change_from_buy >= 3 and drop_from_peak >= 1.5:
                 sell_coin(symbol)
             elif change_from_buy <= -3:
@@ -104,45 +104,50 @@ def emergency_sell_all():
 
 # أمر الملخص
 def summary():
-    msg = "📊 العملات المراقَبة:\n"
+    msg = "📊 العملات المراقبة:
+"
     for symbol in r.keys():
         symbol = symbol.decode()
         data = r.hgetall(symbol)
         bought = float(data[b"bought"].decode())
         high = float(data[b"high"].decode())
         current = fetch_price(symbol)
-        change = ((current - bought) / bought) * 100 if current else 0
-        msg += f"{symbol}: حاليًا {current:.2f}€ | تم الشراء {bought:.2f}€ | ربح/خسارة {change:.2f}%"
+        change = ((current - bought) / bought) * 100
+        msg += f"{symbol}: حاليًا {current:.2f}€ | تم الشراء {bought:.2f}€ | ربح/خسارة {change:.2f}%
+"
     send_message(msg)
 
-# استقبال Webhook
-@app.route("/webhook/<token>", methods=["POST"])
-def webhook(token):
-    if token != BOT_TOKEN:
-        return "Unauthorized", 403
+# إعداد Flask
+app = Flask(__name__)
 
+@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
+def webhook():
     data = request.get_json()
-    if not data:
-        return "No data", 400
+    message = data.get("message", {}).get("text", "")
+    if not message:
+        return "No message", 200
 
-    msg = data.get("message", {}).get("text", "")
-    if not msg:
-        return "No message", 400
-
-    if msg.strip().lower() in ["#emergency", "طوارئ"]:
-        send_message("🚨 تم تفعيل وضع الطوارئ.")
+    if "طوارئ" in message or "#EMERGENCY" in message:
         emergency_sell_all()
-    elif msg.strip() == "الملخص":
+        send_message("🧨 تم تنفيذ أمر الطوارئ: بيع كامل المحفظة.")
+        return "OK", 200
+
+    if "الملخص" in message:
         summary()
-    elif "-EUR" in msg:
-        symbol = msg.strip().upper()
-        buy_coin(symbol)
+        return "OK", 200
 
-    return "OK", 200
+    if "-EUR" in message:
+        symbol = message.strip().upper()
+        if not r.exists(symbol):
+            buy_coin(symbol)
+        else:
+            send_message(f"{symbol} تحت المراقبة بالفعل.")
+        return "OK", 200
 
-# بدء المراقبة
+    return "Ignored", 200
+
+# تشغيل المراقبة في Thread
 Thread(target=monitor).start()
 
-# تشغيل السيرفر
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
