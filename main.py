@@ -131,7 +131,7 @@ def webhook():
         for key in r.keys():
             k = key.decode()
             v = r.get(k).decode()
-            msg += f"- {k} بسعر {v} يورو
+            msg += f"- {k} بسعر {v} يورو\n"
 "
         send_message(msg if msg.strip() != "📊 العملات المتابعة:" else "لا يوجد عملات تحت المراقبة حالياً.")
         return "done", 200
