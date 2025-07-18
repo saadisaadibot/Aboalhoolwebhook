@@ -59,6 +59,12 @@ def sell(symbol):
         send_message(f"❌ فشل البيع: {e}")
         return False
 
+# 🧹 أمر مسح الذاكرة
+def clear_memory():
+    for key in r.keys():
+        r.delete(key)
+    send_message("🧹 تم مسح جميع العملات من الذاكرة.")
+
 # 🧠 مراقبة الربح والخسارة
 def monitor():
     while True:
@@ -104,12 +110,6 @@ def summary():
         except:
             continue
     send_message(msg)
-
-# 🧹 أمر مسح الذاكرة
-def clear_memory():
-    for key in r.keys():
-        r.delete(key)
-    send_message("🧹 تم مسح جميع العملات من الذاكرة.")
 
 # 📥 Webhook من صقر
 @app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
@@ -159,6 +159,9 @@ def webhook():
     except Exception as e:
         send_message(f"💥 خطأ غير متوقع: {e}")
         return "Server Error", 500
+
+# 🧹 مسح الذاكرة تلقائيًا عند التشغيل
+clear_memory()
 
 # 🔁 تشغيل المراقبة
 threading.Thread(target=monitor, daemon=True).start()
