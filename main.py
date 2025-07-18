@@ -128,7 +128,6 @@ def webhook():
 
     if text == "الملخص":
         msg = "📊 العملات المتابعة:"
-"
         for key in r.keys():
             k = key.decode()
             v = r.get(k).decode()
