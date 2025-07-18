@@ -105,16 +105,17 @@ def emergency_sell_all():
 # أمر الملخص
 def summary():
     msg = "📊 العملات المراقبة:\n"
-for symbol in r.keys():
-    symbol = symbol.decode()
-    data = r.hgetall(symbol)
-    bought = float(data[b"bought"].decode())
-    high = float(data[b"high"].decode())
-    current = fetch_price(symbol)
-    change = ((current - bought) / bought) * 100
-    msg += f"{symbol}: حاليا {current:.2f}€ | تم الشراء {bought:.2f}€ | ربح/خسارة {change:.2f}%\n"
-
-send_message(msg)
+    for symbol in r.keys():
+        symbol = symbol.decode()
+        if r.type(symbol) != b'hash':
+            continue  # تجاهل إذا كانت القيمة مو hash
+        data = r.hgetall(symbol)
+        bought = float(data[b"bought"].decode())
+        high = float(data[b"high"].decode())
+        current = fetch_price(symbol)
+        change = ((current - bought) / bought) * 100
+        msg += f"{symbol}: حاليًا {current:.2f}€ | الشراء {bought:.2f}€ | ربح/خسارة {change:.2f}%\n"
+    send_message(msg)
 # إعداد Flask
 app = Flask(__name__)
 
