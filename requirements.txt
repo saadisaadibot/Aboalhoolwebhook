@@ -1,4 +1,4 @@
 Flask==2.2.5
-redis==4.6.0
+redis==4.5.5
 requests==2.31.0
 bitvavo
