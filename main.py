@@ -1,180 +1,197 @@
-
 import os
-import json
 import time
+import json
 import redis
 import requests
 from flask import Flask, request
 
-app = Flask(__name__)
-
-# إعدادات تيليغرام
+# إعدادات البيئة
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+REDIS_URL = os.getenv("REDIS_URL")
+PORT = int(os.environ.get("PORT", 5000))
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # Redis
-REDIS_URL = os.getenv("REDIS_URL")
-r = redis.from_url(REDIS_URL, decode_responses=True)
+db = redis.from_url(REDIS_URL, decode_responses=True)
 
+# Flask
+app = Flask(__name__)
+
+# إرسال رسالة
 def send_message(text):
-    if BOT_TOKEN and CHAT_ID:
-        try:
-            requests.post(BASE_URL, data={"chat_id": CHAT_ID, "text": text})
-        except Exception as e:
-            print(f"فشل الإرسال: {e}")
-    else:
-        print("⚠️ لم يتم ضبط متغيرات BOT_TOKEN أو CHAT_ID")
+    try:
+        requests.post(f"{BASE_URL}/sendMessage", data={"chat_id": CHAT_ID, "text": text})
+    except Exception as e:
+        print(f"❌ فشل إرسال الرسالة: {e}")
 
+# جلب سعر العملة
 def fetch_price(symbol):
     try:
         url = f"https://api.bitvavo.com/v2/ticker/price?market={symbol}"
-        response = requests.get(url)
-        if response.status_code == 200:
-            return float(response.json()["price"])
+        res = requests.get(url)
+        if res.status_code == 200:
+            return float(res.json()["price"])
     except:
         return None
 
+# تلقي العملات من صقر عبر Webhook
+@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    try:
+        data = request.json
+        print("✅ Webhook:", data)
+        msg = data.get("message", {}) or data.get("edited_message", {})
+        text = msg.get("text") or msg.get("caption") or ""
+        if not text:
+            return "ok"
+
+        if "-EUR" in text:
+            for word in text.split():
+                if "-EUR" in word and word not in db:
+                    price = fetch_price(word)
+                    if price:
+                        db.set(word, json.dumps({
+                            "entry": price,
+                            "status": None,
+                            "start_time": time.time()
+                        }))
+                        send_message(f"🕵️‍♂️ أبو الهول يراقب {word} عند {price} EUR")
+        return "200"
+    except Exception as e:
+        print("❌ Webhook Error:", e)
+        return "error", 500
+
+# حذف الذاكرة
+def delete_memory():
+    for key in db.keys():
+        if key != "sell_log":
+            db.delete(key)
+    send_message("🧹 تم مسح ذاكرة أبو الهول بالكامل.")
+
+# حساب الوقت
 def format_duration(minutes):
     hours = minutes // 60
     mins = minutes % 60
     return f"{hours} ساعة و{mins} دقيقة" if hours else f"{mins} دقيقة"
 
-def process_commands(text):
-    if "حذف" in text:
-        keys = r.keys("*-EUR")
-        for k in keys:
-            r.delete(k)
-        r.delete("sell_log")
-        send_message("🧹 تم مسح ذاكرة أبو الهول بالكامل.")
+# إرسال ملخص
+def summary():
+    log = json.loads(db.get("sell_log", "[]"))
+    if not log:
+        send_message("📊 لا توجد أي عمليات بيع مُسجلة بعد.")
+        return
 
-    elif "الملخص" in text or "الحسابات" in text:
-        log = json.loads(r.get("sell_log") or "[]")
-        if not log:
-            send_message("📊 لا توجد أي عمليات بيع مُسجلة بعد.")
+    total_profit = 0
+    win_count = 0
+    lose_count = 0
+    for trade in log:
+        total_profit += trade["change"]
+        if trade["change"] >= 0:
+            win_count += 1
         else:
-            total_profit = 0
-            win_count = 0
-            lose_count = 0
-            for trade in log:
-                profit_percent = ((trade["exit"] - trade["entry"]) / trade["entry"]) * 100
-                total_profit += profit_percent
-                if profit_percent >= 0:
-                    win_count += 1
-                else:
-                    lose_count += 1
+            lose_count += 1
 
-            msg = (
-                f"📈 عدد الصفقات الرابحة: {win_count}
-"
-                f"📉 عدد الصفقات الخاسرة: {lose_count}
-"
-                f"💰 صافي الربح/الخسارة: {round(total_profit, 2)}%
-"
-            )
+    msg = (
+        f"📈 عدد الصفقات الرابحة: {win_count}\n"
+        f"📉 عدد الصفقات الخاسرة: {lose_count}\n"
+        f"💰 صافي الربح/الخسارة: {round(total_profit, 2)}%\n"
+    )
 
-            # 👁️ العملات التي تتم مراقبتها الآن
-            keys = r.keys("*-EUR")
-            watchlist = []
-            for key in keys:
-                entry = json.loads(r.get(key))
-                duration_min = int((time.time() - entry["start_time"]) / 60)
-                watchlist.append(f"- {key} منذ {format_duration(duration_min)}")
+    watchlist = []
+    for key in db.keys():
+        if key == "sell_log":
+            continue
+        entry = json.loads(db.get(key))
+        duration = int((time.time() - entry["start_time"]) / 60)
+        watchlist.append(f"- {key} منذ {format_duration(duration)}")
 
-            if watchlist:
-                msg += "
-👁️ العملات التي تتم مراقبتها الآن:
-" + "
-".join(watchlist)
-            send_message(msg)
+    if watchlist:
+        msg += "\n👁️ العملات التي تتم مراقبتها الآن:\n" + "\n".join(watchlist)
 
-def process_price_tracking():
-    keys = r.keys("*-EUR")
-    for symbol in keys:
-        entry = json.loads(r.get(symbol))
-        price = fetch_price(symbol)
-        if not price:
+    send_message(msg)
+
+# مراقبة تغير السعر
+def check_prices():
+    for symbol in list(db.keys()):
+        if symbol == "sell_log":
+            continue
+
+        entry = json.loads(db.get(symbol))
+        current = fetch_price(symbol)
+        if not current:
             continue
 
         entry_price = entry["entry"]
 
         if entry.get("status") == "trailing":
             peak = entry["peak"]
-            if price > peak:
-                entry["peak"] = price
-                r.set(symbol, json.dumps(entry))
-            drop = ((peak - price) / peak) * 100
+            if current > peak:
+                entry["peak"] = current
+                db.set(symbol, json.dumps(entry))
+
+            drop = ((peak - current) / peak) * 100
             if drop >= 1.5:
-                change = ((price - entry_price) / entry_price) * 100
-                send_message(f"🎯 {symbol} تم البيع بعد ارتفاع ثم نزول – ربح {round(change,2)}%")
-                log = json.loads(r.get("sell_log") or "[]")
+                change = ((current - entry_price) / entry_price) * 100
+                send_message(f"🎯 {symbol} تم البيع بعد ارتفاع ثم نزول – ربح {round(change, 2)}%")
+                log = json.loads(db.get("sell_log", "[]"))
                 log.append({
                     "symbol": symbol,
                     "entry": entry_price,
-                    "exit": price,
-                    "change": round(change,2),
+                    "exit": current,
+                    "change": round(change, 2),
                     "result": "ربح"
                 })
-                r.set("sell_log", json.dumps(log))
-                r.delete(symbol)
+                db.set("sell_log", json.dumps(log))
+                db.delete(symbol)
+
         else:
-            change = ((price - entry_price) / entry_price) * 100
+            change = ((current - entry_price) / entry_price) * 100
             if change >= 3:
                 entry["status"] = "trailing"
-                entry["peak"] = price
-                r.set(symbol, json.dumps(entry))
+                entry["peak"] = current
+                db.set(symbol, json.dumps(entry))
                 send_message(f"🟢 {symbol} ارتفعت +3% – نبدأ مراقبة القمة.")
             elif change <= -3:
                 send_message(f"📉 {symbol} خسارة -{round(abs(change), 2)}% – تم البيع.")
-                log = json.loads(r.get("sell_log") or "[]")
+                log = json.loads(db.get("sell_log", "[]"))
                 log.append({
                     "symbol": symbol,
                     "entry": entry_price,
-                    "exit": price,
-                    "change": round(change,2),
+                    "exit": current,
+                    "change": round(change, 2),
                     "result": "خسارة"
                 })
-                r.set("sell_log", json.dumps(log))
-                r.delete(symbol)
+                db.set("sell_log", json.dumps(log))
+                db.delete(symbol)
 
-@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
-def webhook():
+# استقبال أوامر تيليغرام
+@app.route(f"/bot/{BOT_TOKEN}", methods=["POST"])
+def telegram_commands():
     try:
         data = request.json
-        print("✅ Webhook استلم:", data)
-
-        message = data.get("message", {})
-        text = message.get("text", "")
-
-        if "-EUR" in text:
-            parts = text.split()
-            for word in parts:
-                if "-EUR" in word and not r.exists(word):
-                    price = fetch_price(word)
-                    if price:
-                        r.set(word, json.dumps({
-                            "entry": price,
-                            "status": None,
-                            "start_time": time.time()
-                        }))
-                        send_message(f"🕵️‍♂️ أبو الهول يراقب {word} عند {price} EUR")
-
-        process_commands(text)
-        return "200"
+        msg = data.get("message", {}) or data.get("edited_message", {})
+        text = msg.get("text", "") or ""
+        if "حذف" in text:
+            delete_memory()
+        elif "الملخص" in text or "الحسابات" in text:
+            summary()
+        return "ok"
     except Exception as e:
-        print("❌ خطأ:", e)
+        print("❌ أمر تيليغرام فشل:", e)
         return "error", 500
 
+# تشغيل البوت
 if __name__ == "__main__":
+    send_message("✅ تم تشغيل أبو الهول بنجاح (Webhook + Trail Logic).")
     import threading
     def loop():
         while True:
             try:
-                process_price_tracking()
+                check_prices()
                 time.sleep(5)
             except Exception as e:
-                print("Loop Error:", e)
-                time.sleep(5)
+                print("❌ حلقة السعر:", e)
+                time.sleep(10)
     threading.Thread(target=loop).start()
-    send_message("🤖 تم تشغيل أبو الهول.")
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=PORT)
