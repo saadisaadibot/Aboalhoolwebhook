@@ -40,7 +40,7 @@ def send_message(text):
 # 💸 تنفيذ شراء Market بقيمة 10 يورو
 def buy(symbol):
     try:
-        bitvavo.placeOrder(symbol, 'buy', 'market', {'amount': 10})
+        bitvavo.placeOrder(symbol, 'buy', 'market', {'amountQuote': 10})
         return True
     except Exception as e:
         send_message(f"❌ فشل الشراء: {e}")
